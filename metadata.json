@@ -1,0 +1,5 @@
+{
+  "name": "Guerreiro Pixel",
+  "description": "Um jogo de sobrevivência roguelike em pixel art onde você derrota monstros, coleta XP e escolhe evoluções geradas por IA.",
+  "requestFramePermissions": []
+}
