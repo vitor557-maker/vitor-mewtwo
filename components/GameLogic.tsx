@@ -1,8 +1,9 @@
+
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { renderGame } from './GameRenderer';
 import { GameState, Player, Enemy, Projectile, XpOrb, FloatingText, UpgradeCard, Position, Decoration } from '../types';
 import { generateUpgrades } from '../services/geminiService';
-import { Loader2, Heart, Zap, Swords, Flame, Snowflake, Skull } from 'lucide-react';
+import { Loader2, Heart, Zap, Swords, Flame, Snowflake, Skull, CloudFog, CloudRain, GraduationCap } from 'lucide-react';
 
 // --- Constants ---
 const PLAYER_SPEED_BASE = 3;
@@ -12,12 +13,18 @@ const BOSS_SPAWN_TIME = 5 * 60 * 60; // 5 minutes * 60 seconds * 60 frames
 
 interface GameLogicProps {
   onGameStateChange: (state: GameState) => void;
+  mobileMode: boolean;
 }
 
-const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
+const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange, mobileMode }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>();
   
+  // Joystick Refs
+  const joystickRef = useRef<HTMLDivElement>(null);
+  const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 });
+  const [isDraggingJoystick, setIsDraggingJoystick] = useState(false);
+
   // React State for UI Overlays (updates less frequently)
   const [uiState, setUiState] = useState<{
     hp: number;
@@ -36,6 +43,7 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
   // Mutable Game State (updates 60fps)
   const gameRef = useRef({
     keys: {} as Record<string, boolean>,
+    inputVector: { x: 0, y: 0 }, // Joystick input
     player: {
       pos: { x: MAP_BOUNDS.width / 2, y: MAP_BOUNDS.height / 2 },
       hp: 100,
@@ -49,7 +57,11 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       xpToNextLevel: 50,
       projectileCount: 1,
       burnChance: 0,
-      freezeChance: 0
+      freezeChance: 0,
+      poisonDamage: 0,
+      poisonRange: 150,
+      meteorLevel: 0,
+      xpMultiplier: 1
     } as Player,
     enemies: [] as Enemy[],
     projectiles: [] as Projectile[],
@@ -103,7 +115,7 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     gameRef.current.decorations = decorations;
   }, []);
 
-  // --- Input Handling ---
+  // --- Input Handling (Keyboard) ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => { gameRef.current.keys[e.code] = true; };
     const handleKeyUp = (e: KeyboardEvent) => { gameRef.current.keys[e.code] = false; };
@@ -115,10 +127,58 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     };
   }, []);
 
+  // --- Joystick Handling ---
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setIsDraggingJoystick(true);
+    updateJoystick(e);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isDraggingJoystick) {
+      updateJoystick(e);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDraggingJoystick(false);
+    setJoystickPos({ x: 0, y: 0 });
+    gameRef.current.inputVector = { x: 0, y: 0 };
+  };
+
+  const updateJoystick = (e: React.TouchEvent) => {
+    if (!joystickRef.current) return;
+
+    const touch = e.touches[0];
+    const rect = joystickRef.current.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const maxRadius = rect.width / 2;
+    
+    let dx = touch.clientX - centerX;
+    let dy = touch.clientY - centerY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    // Normalize if outside radius
+    if (distance > maxRadius) {
+      const ratio = maxRadius / distance;
+      dx *= ratio;
+      dy *= ratio;
+    }
+
+    setJoystickPos({ x: dx, y: dy });
+    
+    // Set input vector (-1 to 1)
+    gameRef.current.inputVector = {
+      x: dx / maxRadius,
+      y: dy / maxRadius
+    };
+  };
+
   // --- Core Game Loop ---
   const update = useCallback(() => {
     const state = gameRef.current;
-    const { player, enemies, projectiles, xpOrbs, floatingTexts, keys, decorations } = state;
+    const { player, enemies, projectiles, xpOrbs, floatingTexts, keys, decorations, inputVector } = state;
 
     if (player.hp <= 0) {
       setLocalGameState(GameState.GAME_OVER);
@@ -132,19 +192,27 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     // 1. Player Movement
     let dx = 0;
     let dy = 0;
+    
+    // Keyboard Input
     if (keys['ArrowUp'] || keys['KeyW']) dy -= 1;
     if (keys['ArrowDown'] || keys['KeyS']) dy += 1;
     if (keys['ArrowLeft'] || keys['KeyA']) dx -= 1;
     if (keys['ArrowRight'] || keys['KeyD']) dx += 1;
 
-    // Normalize vector
-    if (dx !== 0 || dy !== 0) {
+    // Joystick Input (Overrides keyboard if active)
+    if (inputVector.x !== 0 || inputVector.y !== 0) {
+      dx = inputVector.x;
+      dy = inputVector.y;
+    } else if (dx !== 0 || dy !== 0) {
+      // Normalize keyboard vector
       const length = Math.hypot(dx, dy);
       dx /= length;
       dy /= length;
-      player.pos.x += dx * player.speed;
-      player.pos.y += dy * player.speed;
     }
+
+    // Apply Movement
+    player.pos.x += dx * player.speed;
+    player.pos.y += dy * player.speed;
 
     // Boundary check
     player.pos.x = Math.max(20, Math.min(MAP_BOUNDS.width - 20, player.pos.x));
@@ -171,16 +239,14 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     
     // Regular Spawn
     const currentSpawnRate = Math.max(10, SPAWN_RATE_INITIAL - Math.floor(player.level * 2));
-    // Don't spawn too many if Boss is alive to prevent clutter
     const bossAlive = enemies.some(e => e.isBoss);
     
     if (state.frame % (bossAlive ? currentSpawnRate * 3 : currentSpawnRate) === 0) {
       const angle = Math.random() * Math.PI * 2;
-      const radius = 400; // Spawn outside immediate view
+      const radius = 400;
       const ex = player.pos.x + Math.cos(angle) * radius;
       const ey = player.pos.y + Math.sin(angle) * radius;
       
-      // Keep inside map
       if (ex > 0 && ex < MAP_BOUNDS.width && ey > 0 && ey < MAP_BOUNDS.height) {
         const maxHp = 10 + (player.level * 5);
         enemies.push({
@@ -198,23 +264,63 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       }
     }
 
-    // 3. Enemy Logic (Move to player + Collision)
+    // 3. Passive Skills (Poison & Meteor)
+    
+    // Poison Area Logic
+    if (player.poisonDamage > 0 && state.frame % 60 === 0) {
+      enemies.forEach((enemy, idx) => {
+        const dist = Math.hypot(player.pos.x - enemy.pos.x, player.pos.y - enemy.pos.y);
+        if (dist <= player.poisonRange) {
+          enemy.hp -= player.poisonDamage;
+          addFloatingText(enemy.pos, `${player.poisonDamage}`, '#10b981'); // Green text
+          if (enemy.hp <= 0) handleEnemyDeath(idx);
+        }
+      });
+    }
+
+    // Meteor Rain Logic
+    if (player.meteorLevel > 0) {
+      // Chance per frame to spawn a meteor. Higher level = more frequent.
+      // Level 1 ~ every 3 seconds (180 frames). 
+      // Chance = 1/180.
+      const meteorChance = 0.005 * player.meteorLevel;
+      if (Math.random() < meteorChance) {
+        // Spawn random meteor near player
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * 300;
+        const targetX = player.pos.x + Math.cos(angle) * dist;
+        const targetY = player.pos.y + Math.sin(angle) * dist;
+        
+        projectiles.push({
+          id: `meteor-${state.frame}-${Math.random()}`,
+          pos: { x: targetX, y: targetY - 300 }, // Start "high up" visually (y offset handled in renderer usually, but here we simulate travel)
+          velocity: { x: 0, y: 10 }, // Fast fall down
+          damage: player.damage * 3,
+          duration: 30, // Quick life
+          type: 'meteor',
+          blastRadius: 60,
+          effect: 'BURN'
+        });
+      }
+    }
+
+    // 4. Enemy Logic
     for (let i = enemies.length - 1; i >= 0; i--) {
       const enemy = enemies[i];
       
-      // Status Effects Logic
+      // Skip dead enemies (handled in poison logic)
+      if (enemy.hp <= 0) continue; 
+
       let currentSpeed = enemy.speed;
       
-      // Freeze
       if (enemy.freezeTimer > 0) {
         enemy.freezeTimer--;
         currentSpeed *= 0.5;
       }
       
-      // Burn
       if (enemy.burnTimer > 0) {
         enemy.burnTimer--;
-        if (state.frame % 30 === 0) { // Tick every half second
+        if (state.frame % 30 === 0) {
           const burnDmg = Math.ceil(player.damage * 0.2);
           enemy.hp -= burnDmg;
           addFloatingText(enemy.pos, `${burnDmg}`, '#f97316');
@@ -229,21 +335,19 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       enemy.pos.x += Math.cos(angle) * currentSpeed;
       enemy.pos.y += Math.sin(angle) * currentSpeed;
 
-      // Player Collision (Damage)
       const dist = Math.hypot(player.pos.x - enemy.pos.x, player.pos.y - enemy.pos.y);
       const collisionRadius = enemy.isBoss ? 50 : 20;
       
       if (dist < collisionRadius) {
-        if (state.frame % 30 === 0) { // iFrames check rough
+        if (state.frame % 30 === 0) {
           player.hp -= enemy.damage;
           addFloatingText(player.pos, `-${enemy.damage}`, '#ef4444');
         }
       }
     }
 
-    // 4. Auto Attack Logic
+    // 5. Auto Attack Logic
     if (state.frame % player.attackCooldown === 0) {
-      // Find closest enemy
       let closest: Enemy | null = null;
       let minDst = Infinity;
       
@@ -260,7 +364,6 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
         for (let p = 0; p < player.projectileCount; p++) {
           const angle = Math.atan2(target.pos.y - player.pos.y, target.pos.x - player.pos.x) + (p - (player.projectileCount-1)/2) * 0.2;
           
-          // Determine Effect
           let effect: 'BURN' | 'FREEZE' | undefined = undefined;
           if (player.burnChance > 0 && Math.random() < player.burnChance) effect = 'BURN';
           else if (player.freezeChance > 0 && Math.random() < player.freezeChance) effect = 'FREEZE';
@@ -271,13 +374,15 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
             velocity: { x: Math.cos(angle) * 6, y: Math.sin(angle) * 6 },
             damage: player.damage,
             duration: 120,
-            effect
+            effect,
+            type: 'standard',
+            blastRadius: 0
           });
         }
       }
     }
 
-    // 5. Projectile Logic
+    // 6. Projectile Logic
     for (let i = projectiles.length - 1; i >= 0; i--) {
       const p = projectiles[i];
       p.pos.x += p.velocity.x;
@@ -285,52 +390,66 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       p.duration--;
 
       if (p.duration <= 0) {
+        // If meteor expires (hits ground essentially), explode
+        if (p.type === 'meteor') {
+           // Blast damage
+           enemies.forEach((e, eIdx) => {
+              const d = Math.hypot(p.pos.x - e.pos.x, p.pos.y - e.pos.y);
+              if (d < p.blastRadius) {
+                 e.hp -= p.damage;
+                 addFloatingText(e.pos, `${p.damage.toFixed(0)}`, '#f59e0b');
+                 if (e.hp <= 0) handleEnemyDeath(eIdx);
+              }
+           });
+        }
         projectiles.splice(i, 1);
         continue;
       }
 
-      // Hit Detection
-      for (let j = enemies.length - 1; j >= 0; j--) {
-        const e = enemies[j];
-        const hitRadius = e.isBoss ? 40 : 20;
-        const dist = Math.hypot(p.pos.x - e.pos.x, p.pos.y - e.pos.y);
-        
-        if (dist < hitRadius) {
-          e.hp -= p.damage;
-          addFloatingText(e.pos, `${p.damage.toFixed(0)}`, '#fff');
-          
-          // Apply Effects
-          if (p.effect === 'BURN') e.burnTimer = 180; // 3 seconds
-          if (p.effect === 'FREEZE') e.freezeTimer = 120; // 2 seconds
+      // Standard Projectile Collision
+      if (p.type === 'standard') {
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const e = enemies[j];
+          if (e.hp <= 0) continue;
 
-          // Enemy Death
-          if (e.hp <= 0) {
-            handleEnemyDeath(j);
-          }
+          const hitRadius = e.isBoss ? 40 : 20;
+          const dist = Math.hypot(p.pos.x - e.pos.x, p.pos.y - e.pos.y);
           
-          projectiles.splice(i, 1); // Remove projectile on hit
-          break;
+          if (dist < hitRadius) {
+            e.hp -= p.damage;
+            addFloatingText(e.pos, `${p.damage.toFixed(0)}`, '#fff');
+            
+            if (p.effect === 'BURN') e.burnTimer = 180;
+            if (p.effect === 'FREEZE') e.freezeTimer = 120;
+
+            if (e.hp <= 0) {
+              handleEnemyDeath(j);
+            }
+            
+            projectiles.splice(i, 1);
+            break;
+          }
         }
       }
     }
 
-    // 6. XP Collection
+    // 7. XP Collection
     for (let i = xpOrbs.length - 1; i >= 0; i--) {
       const orb = xpOrbs[i];
       const dist = Math.hypot(player.pos.x - orb.pos.x, player.pos.y - orb.pos.y);
       
-      // Magnet effect
       if (dist < 100) {
         orb.pos.x += (player.pos.x - orb.pos.x) * 0.1;
         orb.pos.y += (player.pos.y - orb.pos.y) * 0.1;
       }
 
       if (dist < 20) {
-        player.xp += orb.value;
+        // Apply XP Multiplier
+        const xpValue = orb.value * player.xpMultiplier;
+        player.xp += xpValue;
         xpOrbs.splice(i, 1);
         
         if (orb.isBossDrop) {
-            // Guaranteed level up + Boss Reward Flag
             triggerLevelUp(true);
         } else if (player.xp >= player.xpToNextLevel) {
             triggerLevelUp(false);
@@ -338,7 +457,7 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       }
     }
 
-    // 7. Floating Text Animation
+    // 8. Floating Text
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
       const ft = floatingTexts[i];
       ft.pos.y -= 0.5;
@@ -346,7 +465,6 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       if (ft.life <= 0) floatingTexts.splice(i, 1);
     }
 
-    // Sync slow state for UI
     if (state.frame % 10 === 0) {
       setUiState({
         hp: player.hp,
@@ -358,7 +476,6 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
       });
     }
 
-    // Render
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) renderGame(ctx, canvasRef.current, player, enemies, projectiles, xpOrbs, floatingTexts, decorations, state.gameTime);
@@ -367,13 +484,14 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     requestRef.current = requestAnimationFrame(update);
   }, [gameState]); 
 
-  // Helper for death logic to avoid duplication
   const handleEnemyDeath = (enemyIndex: number) => {
       const state = gameRef.current;
+      // Double check existence because loops might cause race conditions if splicing wrong index
+      if (!state.enemies[enemyIndex]) return;
+      
       const enemy = state.enemies[enemyIndex];
       
       if (enemy.isBoss) {
-         // Boss drop: Massive XP orb that triggers special event
          state.xpOrbs.push({ id: `xp-boss-${state.frame}`, pos: { ...enemy.pos }, value: state.player.xpToNextLevel, isBossDrop: true });
          state.score += 1000;
          addFloatingText(enemy.pos, "BOSS DERROTADO!", '#ffd700');
@@ -401,8 +519,12 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
     
     setLoadingUpgrades(true);
-    setIsBossReward(bossReward); // Set flag for UI and subsequent logic if needed
+    setIsBossReward(bossReward);
     
+    setIsDraggingJoystick(false);
+    setJoystickPos({x: 0, y: 0});
+    gameRef.current.inputVector = {x: 0, y: 0};
+
     const newUpgrades = await generateUpgrades(gameRef.current.player.level + 1, bossReward);
     setUpgrades(newUpgrades);
     setLoadingUpgrades(false);
@@ -411,29 +533,36 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
   const applyUpgrade = (card: UpgradeCard) => {
     const player = gameRef.current.player;
     
-    // Apply Stats
     switch (card.type) {
       case 'DAMAGE': player.damage += card.value; break;
       case 'SPEED': player.speed += card.value; break;
       case 'HEALTH': 
         player.maxHp += card.value; 
-        player.hp = player.maxHp; // Heal on max hp up
+        player.hp = player.maxHp;
         break;
       case 'PROJECTILE': player.projectileCount += card.value; break;
       case 'COOLDOWN': player.attackCooldown = Math.max(5, player.attackCooldown - card.value); break;
       case 'ELEMENTAL':
-         // Simple toggle or chance increase
          if (card.description.toLowerCase().includes('queimadura') || card.name.toLowerCase().includes('fogo')) {
             player.burnChance = 1.0; 
          } else {
             player.freezeChance = 1.0;
          }
          break;
+      case 'AREA':
+         player.poisonDamage += card.value;
+         player.poisonRange += 20; // Expand range slightly too
+         break;
+      case 'METEOR':
+         player.meteorLevel += card.value;
+         break;
+      case 'XP':
+         player.xpMultiplier += card.value;
+         break;
     }
 
-    // Level up logic
     player.level++;
-    player.xp = 0; // Reset for simplicity or keep overflow
+    player.xp = 0; 
     player.xpToNextLevel = Math.floor(player.xpToNextLevel * 1.5);
     
     setIsBossReward(false);
@@ -441,7 +570,6 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     onGameStateChange(GameState.PLAYING);
   };
 
-  // Start/Stop Loop based on state
   useEffect(() => {
     if (gameState === GameState.PLAYING) {
       requestRef.current = requestAnimationFrame(update);
@@ -451,15 +579,12 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
     };
   }, [gameState, update]);
 
-  // Initial Start
   useEffect(() => {
     setLocalGameState(GameState.PLAYING);
   }, []);
-
-  // --- UI RENDERING ---
   
   return (
-    <div className="relative w-full h-full bg-black">
+    <div className="relative w-full h-full bg-black touch-none select-none">
       <canvas
         ref={canvasRef}
         width={window.innerWidth}
@@ -493,6 +618,26 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
         
         <div className="text-white text-sm mt-2">Score: {uiState.score}</div>
       </div>
+
+      {/* MOBILE JOYSTICK */}
+      {mobileMode && gameState === GameState.PLAYING && (
+        <div 
+          ref={joystickRef}
+          className="absolute bottom-12 left-12 w-32 h-32 rounded-full bg-white/20 border-2 border-white/30 backdrop-blur-sm touch-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+           <div 
+             className="absolute w-12 h-12 bg-white/80 rounded-full shadow-lg pointer-events-none"
+             style={{
+               top: '50%',
+               left: '50%',
+               transform: `translate(calc(-50% + ${joystickPos.x}px), calc(-50% + ${joystickPos.y}px))`
+             }}
+           />
+        </div>
+      )}
 
       {/* Level Up Modal */}
       {gameState === GameState.LEVEL_UP && (
@@ -532,6 +677,9 @@ const GameLogic: React.FC<GameLogicProps> = ({ onGameStateChange }) => {
                       {card.type === 'PROJECTILE' && <Swords className="w-12 h-12 text-green-500" />}
                       {card.type === 'COOLDOWN' && <Zap className="w-12 h-12 text-purple-500" />}
                       {card.type === 'ELEMENTAL' && (card.name.includes('Fogo') ? <Flame className="w-12 h-12 text-orange-500"/> : <Snowflake className="w-12 h-12 text-cyan-400"/>)}
+                      {card.type === 'AREA' && <CloudFog className="w-12 h-12 text-green-500" />}
+                      {card.type === 'METEOR' && <CloudRain className="w-12 h-12 text-orange-600" />}
+                      {card.type === 'XP' && <GraduationCap className="w-12 h-12 text-yellow-300" />}
                     </div>
 
                     <h3 className="text-xl text-white mb-2 font-bold">{card.name}</h3>

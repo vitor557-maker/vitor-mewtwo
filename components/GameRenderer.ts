@@ -1,3 +1,4 @@
+
 import { Enemy, Player, Projectile, XpOrb, FloatingText, Decoration } from "../types";
 
 const PIXEL_SIZE = 4;
@@ -154,15 +155,41 @@ export const renderGame = (
     ctx.shadowBlur = 0;
   });
 
+  // 3.5 Draw Poison Aura if active
+  if (player.poisonDamage > 0) {
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.2)'; // Transparent Green
+    ctx.beginPath();
+    ctx.arc(player.pos.x, player.pos.y, player.poisonRange, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(34, 197, 94, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
   // 4. Draw Projectiles
   projectiles.forEach(proj => {
-    if (proj.effect === 'BURN') ctx.fillStyle = '#f97316'; // Orange
-    else if (proj.effect === 'FREEZE') ctx.fillStyle = '#06b6d4'; // Cyan
-    else ctx.fillStyle = '#fff';
-    
-    ctx.beginPath();
-    ctx.arc(proj.pos.x, proj.pos.y, 4, 0, Math.PI * 2);
-    ctx.fill();
+    if (proj.type === 'meteor') {
+      // Meteor Visual
+      ctx.fillStyle = '#ea580c'; // Orange/Red
+      ctx.beginPath();
+      ctx.arc(proj.pos.x, proj.pos.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Trail
+      ctx.fillStyle = 'rgba(251, 146, 60, 0.5)';
+      ctx.beginPath();
+      ctx.arc(proj.pos.x, proj.pos.y - 10, 6, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Standard
+      if (proj.effect === 'BURN') ctx.fillStyle = '#f97316'; // Orange
+      else if (proj.effect === 'FREEZE') ctx.fillStyle = '#06b6d4'; // Cyan
+      else ctx.fillStyle = '#fff';
+      
+      ctx.beginPath();
+      ctx.arc(proj.pos.x, proj.pos.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
 
   // 5. Draw Enemies

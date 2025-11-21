@@ -1,3 +1,4 @@
+
 export enum GameState {
   MENU,
   PLAYING,
@@ -22,9 +23,14 @@ export interface Player {
   xp: number;
   xpToNextLevel: number;
   projectileCount: number;
-  // New Elemental stats
+  // Elemental stats
   burnChance: number; // 0 to 1
   freezeChance: number; // 0 to 1
+  // New Stats
+  poisonDamage: number; // Damage per tick (0 = inactive)
+  poisonRange: number; // Radius of area
+  meteorLevel: number; // 0 = inactive, higher = more freq/damage
+  xpMultiplier: number; // 1.0 = base
 }
 
 export interface Enemy {
@@ -48,6 +54,9 @@ export interface Projectile {
   damage: number;
   duration: number; // Frames to live
   effect?: 'BURN' | 'FREEZE';
+  // New Projectile Types
+  type: 'standard' | 'meteor';
+  blastRadius: number; // For meteors
 }
 
 export interface XpOrb {
@@ -70,7 +79,7 @@ export interface UpgradeCard {
   id: string;
   name: string;
   description: string;
-  type: 'DAMAGE' | 'SPEED' | 'HEALTH' | 'PROJECTILE' | 'COOLDOWN' | 'ELEMENTAL';
+  type: 'DAMAGE' | 'SPEED' | 'HEALTH' | 'PROJECTILE' | 'COOLDOWN' | 'ELEMENTAL' | 'AREA' | 'METEOR' | 'XP';
   value: number;
   rarity: 'Comum' | 'Raro' | 'Épico' | 'Lendário' | 'Divino';
 }
